@@ -11,13 +11,13 @@ Zero-public-port server setup: SSH via Tailscale, HTTP via Cloudflare Tunnel.
 
 ```bash
 # 1. As root on fresh server — installs Docker, creates deploy user, hardens SSH
-curl -fsSL https://raw.githubusercontent.com/USER/hetzner-setup/main/1-setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kingsidharth/hetzner_server_setup/main/1-setup.sh | bash
 
 # ⚠️  Test deploy login in a NEW terminal before proceeding
 # ssh deploy@<ip> -i ~/.ssh/id_hetz1
 
 # 2. As deploy — clone and run
-git clone https://github.com/USER/hetzner-setup.git ~/setup
+git clone https://github.com/kingsidharth/hetzner_server_setup.git ~/setup
 cd ~/setup
 
 bash 2-tailscale.sh --key tskey-auth-kXXXXX
