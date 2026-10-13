@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly ci-platform image rebuild (runner updates are disabled inside containers)
+
+[Timer]
+OnCalendar=Sun 03:30
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

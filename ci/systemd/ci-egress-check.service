@@ -1,0 +1,7 @@
+[Unit]
+Description=Re-apply ci-platform egress rules
+After=ci-egress.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ci-egress

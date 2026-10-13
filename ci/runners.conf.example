@@ -1,0 +1,17 @@
+# /etc/ci-platform/runners.conf - one line per runner. Lives on the host only, because
+# this repository is public and should not list private repositories.
+#
+# instance: unique name, also the systemd instance (ci-runner@<instance>) and container name
+# repo:     owner/name the runner registers with (personal-account runners are per repo)
+# image:    toolchain image under images/ (node, android, windows)
+# trust:    check   = pull requests welcome, never gets host secrets
+#           release = only push/workflow_dispatch/release on main or v<digit>* tags; may mount secrets
+# cpus, memory: container limits
+# labels:   comma list, no defaults added. Jobs must ask for these exact labels.
+# secrets:  comma list of /etc/ci-secrets/<scope> directories to mount, or - for none
+#
+# instance          repo                      image    trust    cpus memory labels                    secrets
+example-node        owner/example             node     check    4    8g     takida,node               -
+example-deploy      owner/example             node     release  2    4g     takida,node-release       -
+example-android     owner/example             android  release  8    16g    takida,android            example
+example-windows     owner/example             windows  check    4    8g     takida,windows-cross      -

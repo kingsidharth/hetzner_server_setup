@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# ci-platform: shared, containerised GitHub Actions runners for every project on this host.
+# Runs as root. Containers run under the dedicated rootless Docker of the "ci-runner" user.
+#
+#   ci-platform list                 show configured runners and their state
+#   ci-platform register <instance>  register one runner; registration token on stdin
+#   ci-platform sync                 start ready runners, stop removed ones
+#   ci-platform build-images [--latest-runner]
+#   ci-platform run|stop <instance>  used by ci-runner@.service
+#
+# With a token in /etc/ci-platform/github-token (fine-grained PAT, Administration: write on
+# the listed repos), every container gets a single-use JIT runner and `register` is unused.
+set -Eeuo pipefail
+
+CI_USER=ci-runner
+CONF=${CI_PLATFORM_CONF:-/etc/ci-platform/runners.conf}
+TOKEN_FILE=/etc/ci-platform/github-token
+SECRETS_ROOT=/etc/ci-secrets
+STATE_ROOT=/var/lib/ci-platform/state
+RUN_ROOT=/run/ci-platform # tmpfs: staged secrets never touch disk
+IMAGES_DIR=/usr/local/lib/ci-platform/images
+CACHES=(bun npm electron electron-builder gradle toolcache)
+
+die() { echo "ci-platform: $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "run as root"
+
+CI_UID=$(id -u "$CI_USER")
+export DOCKER_HOST="unix:///run/user/${CI_UID}/docker.sock"
+
+# Config columns: instance repo image trust cpus memory labels secrets
+instances() { grep -Ev '^[[:space:]]*(#|$)' "$CONF"; }
+
+load() {
+  [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad instance name '$1'"
+  local line
+  line=$(instances | awk -v i="$1" '$1 == i' | head -n1)
+  [[ -n $line ]] || die "unknown instance '$1' (not in $CONF)"
+  read -r INSTANCE REPO IMAGE TRUST CPUS MEMORY LABELS SECRETS <<<"$line"
+  [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "$INSTANCE: bad repo '$REPO'"
+  [[ $TRUST == check || $TRUST == release ]] || die "$INSTANCE: trust must be check or release"
+  [[ $SECRETS == - || $TRUST == release ]] || die "$INSTANCE: only release-tier runners may mount secrets"
+  RUNNER_NAME="$(hostname -s)-${INSTANCE}"
+  STATE="$STATE_ROOT/$INSTANCE"
+}
+
+ready() { [[ -r $TOKEN_FILE || -f $STATE_ROOT/$1/.runner ]]; }
+
+owned_dir() { install -d -o "$CI_USER" -g "$CI_USER" -m 0700 "$@"; }
+
+# $1: ro or rw for the saved registration
+common_args() {
+  local args=(-e "CI_REPO=$REPO" -e "CI_RUNNER_NAME=$RUNNER_NAME" -e "CI_LABELS=$LABELS"
+    -e "CI_TRUST=$TRUST" -v "$STATE:/runner-state:$1") cache_scope=check c
+  # Release caches are per repo, so a weaker project can't poison a stronger one's builds.
+  [[ $TRUST == release ]] && cache_scope="release-${REPO//\//_}"
+  [[ -n ${CI_RELEASE_REFS:-} ]] && args+=(-e "CI_RELEASE_REFS=$CI_RELEASE_REFS")
+  for c in "${CACHES[@]}"; do args+=(-v "ci-cache-${cache_scope}-${c}:/cache/${c}"); done
+  printf '%s\0' "${args[@]}"
+}
+
+stage_secrets() {
+  local dest="$RUN_ROOT/$INSTANCE/secrets" scope
+  rm -rf "${RUN_ROOT:?}/$INSTANCE"
+  [[ $SECRETS == - ]] && return 0
+  install -d -m 0755 "$RUN_ROOT"
+  owned_dir "$RUN_ROOT/$INSTANCE" "$dest"
+  for scope in ${SECRETS//,/ }; do
+    [[ $scope =~ ^[A-Za-z0-9._-]+$ ]] || die "$INSTANCE: bad secret scope '$scope'"
+    if [[ -d $SECRETS_ROOT/$scope ]]; then
+      cp -R "$SECRETS_ROOT/$scope" "$dest/$scope"
+    else
+      echo "ci-platform: $INSTANCE: secret scope '$scope' not present yet; jobs will skip steps that need it" >&2
+    fi
+  done
+  chown -R "$CI_USER:$CI_USER" "$dest"
+  chmod -R go-rwx "$dest"
+}
+
+# Prints an encoded single-use runner config. The token goes through a root-only header file,
+# never argv, so other users can't read it from a process listing.
+jit_config() {
+  local hdr="$RUN_ROOT/.auth-$INSTANCE" body out
+  install -d -m 0755 "$RUN_ROOT"
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" >"$hdr")
+  body=$(jq -cn --arg n "$RUNNER_NAME-$(date +%s)" --arg l "$LABELS" \
+    '{name: $n, runner_group_id: 1, labels: ($l | split(",")), work_folder: "/work"}')
+  out=$(curl -fsS -X POST -H @"$hdr" -H "Accept: application/vnd.github+json" -d "$body" \
+    "https://api.github.com/repos/$REPO/actions/runners/generate-jitconfig") || true
+  rm -f "$hdr"
+  JIT_RUNNER_ID=$(jq -er .runner.id <<<"$out") || return 1
+  CI_JITCONFIG=$(jq -er .encoded_jit_config <<<"$out") || return 1
+  export CI_JITCONFIG
+}
+
+# Removes a JIT runner whose container never started, so failures don't leave offline runners.
+jit_delete() {
+  local hdr="$RUN_ROOT/.auth-$INSTANCE"
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" >"$hdr")
+  curl -fsS -X DELETE -H @"$hdr" "https://api.github.com/repos/$REPO/actions/runners/$JIT_RUNNER_ID" || true
+  rm -f "$hdr"
+}
+
+cmd_run() {
+  load "$1"
+  local -a args extra=()
+  local rc=0
+  if [[ ! -r $TOKEN_FILE && ! -f $STATE/.runner ]]; then
+    echo "$INSTANCE is not registered; see: ci-platform list" >&2
+    exit 78
+  fi
+  docker image inspect "ci-${IMAGE}:current" >/dev/null || { sleep 30; die "image ci-${IMAGE}:current missing"; }
+  stage_secrets
+  mapfile -d '' args < <(common_args ro)
+  [[ -d $RUN_ROOT/$INSTANCE/secrets ]] && extra+=(-v "$RUN_ROOT/$INSTANCE/secrets:/run/ci-secrets-src:ro")
+  docker rm -f "ci-$INSTANCE" >/dev/null 2>&1 || true
+  # Mint last, so nothing can fail between registering a JIT runner and starting it.
+  if [[ -r $TOKEN_FILE ]]; then
+    jit_config || { sleep 30; die "$INSTANCE: could not mint a JIT runner config"; }
+    extra+=(-e CI_JITCONFIG) # value comes from this process's environment, not argv
+  fi
+  docker run --rm --name "ci-$INSTANCE" --hostname "$INSTANCE" \
+    --cpus "$CPUS" --memory "$MEMORY" --memory-swap "$MEMORY" --pids-limit 8192 \
+    --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL \
+    --security-opt no-new-privileges \
+    --tmpfs /run/secrets:rw,nosuid,nodev,size=32m \
+    "${args[@]}" "${extra[@]}" "ci-${IMAGE}:current" || rc=$?
+  # 125-127: docker couldn't start the container at all.
+  if ((rc >= 125)) && [[ -n ${JIT_RUNNER_ID:-} ]]; then jit_delete; fi
+  exit "$rc"
+}
+
+cmd_stop() {
+  load "$1"
+  # The entrypoint lets a running job finish; after 10 minutes the container is killed.
+  docker stop --time 600 "ci-$INSTANCE" >/dev/null 2>&1 || true
+  rm -rf "${RUN_ROOT:?}/$INSTANCE"
+}
+
+cmd_register() {
+  load "$1"
+  local token=
+  read -r token || [[ -n $token ]] || die "pipe a registration token on stdin, e.g.:
+  gh api -X POST repos/$REPO/actions/runners/registration-token --jq .token | ssh root@$(hostname -s) ci-platform register $INSTANCE"
+  owned_dir "$STATE_ROOT" "$STATE"
+  local -a args
+  mapfile -d '' args < <(common_args rw)
+  printf '%s\n' "$token" | docker run --rm -i --cap-drop ALL --cap-add CHOWN --cap-add FOWNER \
+    --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges \
+    "${args[@]}" "ci-${IMAGE}:current" register
+  systemctl enable --now "ci-runner@${INSTANCE}.service"
+}
+
+cmd_list() {
+  printf '%-22s %-32s %-8s %-8s %-11s %s\n' INSTANCE REPO IMAGE TRUST REGISTERED SERVICE
+  local i r img t reg svc
+  while read -r i r img t _; do
+    reg=no
+    [[ -f $STATE_ROOT/$i/.runner ]] && reg=yes
+    [[ -r $TOKEN_FILE ]] && reg=jit
+    svc=$(systemctl is-active "ci-runner@$i.service" 2>/dev/null || true)
+    printf '%-22s %-32s %-8s %-8s %-11s %s\n' "$i" "$r" "$img" "$t" "$reg" "$svc"
+  done < <(instances)
+}
+
+cmd_sync() {
+  local i r unit
+  while read -r i r _; do
+    if ready "$i"; then
+      systemctl enable --now "ci-runner@$i.service"
+    else
+      echo "needs registration: gh api -X POST repos/$r/actions/runners/registration-token --jq .token | ssh root@$(hostname -s) ci-platform register $i"
+    fi
+  done < <(instances)
+  for unit in $(systemctl list-units --all --plain --no-legend 'ci-runner@*.service' | awk '{print $1}'); do
+    i=${unit#ci-runner@}
+    i=${i%.service}
+    instances | awk -v i="$i" '$1 == i {found=1} END {exit !found}' && continue
+    echo "removing $i (no longer in $CONF); also delete its runner in the repo's Settings > Actions > Runners"
+    systemctl disable --now "$unit"
+  done
+}
+
+latest_runner_args() {
+  local body version sha
+  body=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)
+  version=$(jq -r .tag_name <<<"$body")
+  version=${version#v}
+  sha=$(jq -r .body <<<"$body" | grep -o 'BEGIN SHA linux-x64 -->[0-9a-f]\{64\}' | grep -o '[0-9a-f]\{64\}')
+  [[ -n $version && ${#sha} -eq 64 ]] || die "could not read the latest runner release"
+  printf '%s\0' --build-arg "RUNNER_VERSION=$version" --build-arg "RUNNER_SHA256=$sha"
+}
+
+cmd_build_images() {
+  local -a node_args=()
+  [[ ${1:-} == --latest-runner ]] && mapfile -d '' node_args < <(latest_runner_args)
+  docker build -t ci-node:current "${node_args[@]}" "$IMAGES_DIR/node"
+  local dir name
+  for dir in "$IMAGES_DIR"/*/; do
+    name=$(basename "$dir")
+    [[ $name == node ]] && continue
+    docker build -t "ci-${name}:current" "$dir"
+  done
+  docker image prune -f >/dev/null
+  # Recycle idle runners so they pick up the new image; busy ones recycle after their job.
+  local i
+  while read -r i _; do
+    systemctl is-active --quiet "ci-runner@$i.service" || continue
+    docker exec "ci-$i" test -e /run/ci-guard/worker-pid 2>/dev/null || systemctl restart "ci-runner@$i.service"
+  done < <(instances)
+}
+
+case ${1:-} in
+  list) cmd_list ;;
+  sync) cmd_sync ;;
+  register) cmd_register "${2:?instance}" ;;
+  run) cmd_run "${2:?instance}" ;;
+  stop) cmd_stop "${2:?instance}" ;;
+  build-images) cmd_build_images "${2:-}" ;;
+  *) sed -n '2,12p' "$0"; exit 64 ;;
+esac
