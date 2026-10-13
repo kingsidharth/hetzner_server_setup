@@ -34,11 +34,11 @@ if [[ ${1:-} == register ]]; then
   exit 0
 fi
 
-runner_args=()
-if [[ -n ${CI_JITCONFIG:-} ]]; then
-  runner_args=(--jitconfig "$CI_JITCONFIG")
-  unset CI_JITCONFIG
-else
+# A JIT config is a credential: hand it over in the environment (readable only by the same
+# uid or root), never in argv, which every host user can read through /proc.
+jit=${CI_JITCONFIG:-}
+unset CI_JITCONFIG
+if [[ -z $jit ]]; then
   for f in "${STATE_FILES[@]}"; do
     [[ -f $STATE_DIR/$f ]] || { echo "runner not registered (missing $f)" >&2; exit 78; }
     as_runner sh -c 'umask 077 && cat >"$1"' _ "$RUNNER_DIR/$f" <"$STATE_DIR/$f"
@@ -61,10 +61,13 @@ export RUNNER_MANUALLY_TRAP_SIG=1
 # listener only shuts down cleanly on INT. So enable job control, then stop run.sh with
 # TERM; it forwards INT to the listener.
 set -m
-HOME=/home/runner USER=runner setpriv --reuid=1001 --regid=1001 --init-groups -- \
-  "$RUNNER_DIR/run.sh" "${runner_args[@]}" &
+if [[ -n $jit ]]; then export ACTIONS_RUNNER_INPUT_JITCONFIG=$jit; fi
+HOME=/home/runner USER=runner setpriv --reuid=1001 --regid=1001 --init-groups -- "$RUNNER_DIR/run.sh" &
 pid=$!
-trap 'kill -TERM "$pid" 2>/dev/null || true' TERM INT
+unset ACTIONS_RUNNER_INPUT_JITCONFIG jit
+# On stop, let a running job finish (the host allows 10 minutes); an idle runner stops at once.
+stopping=
+trap 'stopping=1' TERM INT
 
 # One job per container, enforced from root by following the real process tree
 # (run.sh > run-helper.sh > Runner.Listener > Runner.Worker). Job code can't insert itself
@@ -82,7 +85,7 @@ while kill -0 "$pid" 2>/dev/null; do
     echo "second job in one container; killing it" >&2
     kill -KILL "$worker" "$listener" 2>/dev/null || true
     break
-  elif [[ -z $worker && -n $first_worker ]]; then
+  elif [[ -z $worker && ( -n $first_worker || -n $stopping ) ]]; then
     kill -TERM "$pid" 2>/dev/null || true
     break
   fi
