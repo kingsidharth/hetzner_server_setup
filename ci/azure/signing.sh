@@ -9,7 +9,7 @@
 set -Eeuo pipefail
 
 RG=${SIGNING_RG:-rg-shared-signing}
-LOCATION=${SIGNING_LOCATION:-westeurope}  # endpoint https://weu.codesigning.azure.net
+LOCATION=${SIGNING_LOCATION:-northeurope}  # westeurope stopped taking new Artifact Signing customers (Oct 2026)
 ACCOUNT=${SIGNING_ACCOUNT:-kingsidharth-signing}
 PROFILE=${SIGNING_PROFILE:-public-trust}
 APP_NAME=${SIGNING_APP:-github-actions-artifact-signing}
@@ -22,7 +22,8 @@ app_id() { az ad app list --display-name "$APP_NAME" --query '[0].appId' -o tsv;
 
 setup() {
   az provider register -n Microsoft.CodeSigning --wait
-  az group create -n "$RG" -l "$LOCATION" --tags purpose=shared-code-signing >/dev/null
+  # A group's own region doesn't bind its resources, so an existing group is reused wherever it is.
+  az group show -n "$RG" >/dev/null 2>&1 || az group create -n "$RG" -l "$LOCATION" --tags purpose=shared-code-signing >/dev/null
   az trustedsigning show -g "$RG" -n "$ACCOUNT" >/dev/null 2>&1 ||
     az trustedsigning create -g "$RG" -n "$ACCOUNT" -l "$LOCATION" --sku Basic >/dev/null
   [[ -n $(app_id) ]] || az ad app create --display-name "$APP_NAME" --sign-in-audience AzureADMyOrg >/dev/null
@@ -42,7 +43,7 @@ Once it shows Completed, run: bash ci/azure/signing.sh profile
 GitHub repository variables for each project that signs Windows builds:
   AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)
   AZURE_CLIENT_ID=$app
-  AZURE_SIGNING_ENDPOINT=https://weu.codesigning.azure.net
+  AZURE_SIGNING_ENDPOINT=$(az trustedsigning show -g "$RG" -n "$ACCOUNT" --query accountUri -o tsv | sed 's:/*$::')
   AZURE_SIGNING_ACCOUNT=$ACCOUNT
   AZURE_SIGNING_PROFILE=$PROFILE
 EOF
