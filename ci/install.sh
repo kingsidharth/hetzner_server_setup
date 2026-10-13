@@ -73,11 +73,13 @@ install -m 0755 "$here/bin/ci-platform" "$here/bin/ci-egress" /usr/local/sbin/
 
 sed "s/@CI_UID@/${CI_UID}/g" "$here/systemd/ci-runner@.service" >/etc/systemd/system/ci-runner@.service
 install -m 0644 "$here/systemd/ci-images.service" "$here/systemd/ci-images.timer" \
-  "$here/systemd/ci-egress.service" /etc/systemd/system/
+  "$here/systemd/ci-egress.service" "$here/systemd/ci-egress-check.service" \
+  "$here/systemd/ci-egress-check.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now ci-images.timer
 systemctl enable ci-egress.service
 systemctl restart ci-egress.service
+systemctl enable --now ci-egress-check.timer
 
 echo "=== Images"
 ci-platform build-images

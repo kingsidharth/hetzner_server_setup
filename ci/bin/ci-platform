@@ -87,35 +87,51 @@ jit_config() {
   out=$(curl -fsS -X POST -H @"$hdr" -H "Accept: application/vnd.github+json" -d "$body" \
     "https://api.github.com/repos/$REPO/actions/runners/generate-jitconfig") || true
   rm -f "$hdr"
-  jq -er .encoded_jit_config <<<"$out"
+  JIT_RUNNER_ID=$(jq -er .runner.id <<<"$out") || return 1
+  CI_JITCONFIG=$(jq -er .encoded_jit_config <<<"$out") || return 1
+  export CI_JITCONFIG
+}
+
+# Removes a JIT runner whose container never started, so failures don't leave offline runners.
+jit_delete() {
+  local hdr="$RUN_ROOT/.auth-$INSTANCE"
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" >"$hdr")
+  curl -fsS -X DELETE -H @"$hdr" "https://api.github.com/repos/$REPO/actions/runners/$JIT_RUNNER_ID" || true
+  rm -f "$hdr"
 }
 
 cmd_run() {
   load "$1"
   local -a args extra=()
-  if [[ -r $TOKEN_FILE ]]; then
-    CI_JITCONFIG=$(jit_config) || { sleep 30; die "$INSTANCE: could not mint a JIT runner config"; }
-    export CI_JITCONFIG
-    extra+=(-e CI_JITCONFIG) # value comes from this process's environment, not argv
-  elif [[ ! -f $STATE/.runner ]]; then
+  local rc=0
+  if [[ ! -r $TOKEN_FILE && ! -f $STATE/.runner ]]; then
     echo "$INSTANCE is not registered; see: ci-platform list" >&2
     exit 78
   fi
+  docker image inspect "ci-${IMAGE}:current" >/dev/null || { sleep 30; die "image ci-${IMAGE}:current missing"; }
   stage_secrets
   mapfile -d '' args < <(common_args ro)
   [[ -d $RUN_ROOT/$INSTANCE/secrets ]] && extra+=(-v "$RUN_ROOT/$INSTANCE/secrets:/run/ci-secrets-src:ro")
   docker rm -f "ci-$INSTANCE" >/dev/null 2>&1 || true
-  exec docker run --rm --name "ci-$INSTANCE" --hostname "$INSTANCE" \
+  # Mint last, so nothing can fail between registering a JIT runner and starting it.
+  if [[ -r $TOKEN_FILE ]]; then
+    jit_config || { sleep 30; die "$INSTANCE: could not mint a JIT runner config"; }
+    extra+=(-e CI_JITCONFIG) # value comes from this process's environment, not argv
+  fi
+  docker run --rm --name "ci-$INSTANCE" --hostname "$INSTANCE" \
     --cpus "$CPUS" --memory "$MEMORY" --memory-swap "$MEMORY" --pids-limit 8192 \
     --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL \
     --security-opt no-new-privileges \
     --tmpfs /run/secrets:rw,nosuid,nodev,size=32m \
-    "${args[@]}" "${extra[@]}" "ci-${IMAGE}:current"
+    "${args[@]}" "${extra[@]}" "ci-${IMAGE}:current" || rc=$?
+  # 125-127: docker couldn't start the container at all.
+  if ((rc >= 125)) && [[ -n ${JIT_RUNNER_ID:-} ]]; then jit_delete; fi
+  exit "$rc"
 }
 
 cmd_stop() {
   load "$1"
-  # A running job gets up to 10 minutes to finish before the container is killed.
+  # The entrypoint lets a running job finish; after 10 minutes the container is killed.
   docker stop --time 600 "ci-$INSTANCE" >/dev/null 2>&1 || true
   rm -rf "${RUN_ROOT:?}/$INSTANCE"
 }

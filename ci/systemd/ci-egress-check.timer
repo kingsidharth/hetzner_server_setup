@@ -1,0 +1,9 @@
+[Unit]
+Description=Re-apply ci-platform egress rules every 5 minutes, in case a firewall reload dropped them
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

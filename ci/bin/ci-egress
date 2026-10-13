@@ -2,7 +2,8 @@
 # Keeps CI containers to the public internet. Under rootless Docker all container traffic
 # leaves through processes owned by ci-runner, so an owner match covers every container
 # and touches nothing else on the host. Blocks private ranges, link-local (cloud metadata),
-# the tailnet, and this host's own addresses. Idempotent; run by ci-egress.service.
+# the tailnet, and this host's own addresses. Idempotent; run at boot by ci-egress.service
+# and every 5 minutes by ci-egress-check.timer.
 set -Eeuo pipefail
 
 uid=$(id -u ci-runner)
@@ -11,9 +12,12 @@ chain=CI_EGRESS
 apply() {
   local cmd=$1
   shift
-  "$cmd" -w -N "$chain" 2>/dev/null || "$cmd" -w -F "$chain"
+  # Only add what's missing (never flush), so re-applying leaves no unfiltered window.
+  "$cmd" -w -N "$chain" 2>/dev/null || true
   local net
-  for net in "$@"; do "$cmd" -w -A "$chain" -d "$net" -j REJECT; done
+  for net in "$@"; do
+    "$cmd" -w -C "$chain" -d "$net" -j REJECT 2>/dev/null || "$cmd" -w -A "$chain" -d "$net" -j REJECT
+  done
   "$cmd" -w -C OUTPUT -m owner --uid-owner "$uid" -j "$chain" 2>/dev/null ||
     "$cmd" -w -I OUTPUT -m owner --uid-owner "$uid" -j "$chain"
 }
