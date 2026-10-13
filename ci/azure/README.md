@@ -12,8 +12,8 @@ bash ci/azure/signing.sh profile [VALIDATION_ID]  # certificate profile
 bash ci/azure/signing.sh trust OWNER/REPO         # once per project
 ```
 
-- One **Artifact Signing** account (`kingsidharth-signing`, Basic SKU, West Europe, endpoint
-  `https://neu.codesigning.azure.net`, North Europe) and one Public Trust **certificate profile** serve
+- One **Artifact Signing** account (`kingsidharth-signing`, Basic SKU, North Europe, endpoint
+  `https://neu.codesigning.azure.net`) and one Public Trust **certificate profile** serve
   every project.
 - GitHub Actions signs **without a stored secret**. An app registration
   (`github-actions-artifact-signing`) holds the "Artifact Signing Certificate Profile
