@@ -1,19 +1,22 @@
 # ci-node: the shared Linux toolchain image. Every other CI image builds FROM it.
 # Holds the Actions runner plus the JS toolchain (Node, Bun, gh). Nothing secret is baked in.
-FROM ubuntu:24.04
+# Base pinned by digest; the weekly rebuild still picks up security fixes via apt-get upgrade.
+FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ARG RUNNER_VERSION=2.338.0
 ARG RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
 ARG NODE_VERSION=24.21.0
 ARG BUN_VERSION=1.3.12
+ARG GH_KEY_FINGERPRINT=2C6106201985B60E6C7AC87323F3D4EA75716059
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq unzip zip xz-utils rsync file tini procps \
       build-essential python3 openssh-client gnupg util-linux \
     && install -d -m 0755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg \
+    && gpg --show-keys --with-colons /etc/apt/keyrings/githubcli.gpg | grep -q "^fpr:::::::::${GH_KEY_FINGERPRINT}:" \
     && echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
@@ -55,6 +58,6 @@ COPY entrypoint.sh /opt/ci/entrypoint.sh
 COPY hooks/ /opt/ci/hooks/
 RUN chmod 0755 /opt/ci/entrypoint.sh /opt/ci/hooks/*.sh
 
-# Starts as container root (an unprivileged host user under rootless Docker) only to
-# fix volume ownership and stage secrets, then drops to "runner" before any job code runs.
+# Starts as container root (an unprivileged host user under rootless Docker) to fix volume
+# ownership, stage secrets and police the one-job rule; job code only ever runs as "runner".
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/ci/entrypoint.sh"]
