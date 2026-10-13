@@ -18,7 +18,8 @@ dir=$root/$name
 hooks=$root/_hooks
 here=$(cd "$(dirname "$0")" && pwd)
 
-mkdir -p "$dir" "$hooks" "$work_root/$name"
+cache_root=${CI_CACHE_ROOT:-$root/_cache}
+mkdir -p "$dir" "$hooks" "$work_root/$name" "$cache_root/bun"
 install -m 0755 "$here/hooks/job-started.sh" "$here/hooks/job-completed.sh" "$hooks/"
 install -m 0755 "$here/../images/node/hooks/job-started.sh" "$hooks/release-guard.sh"
 
@@ -50,6 +51,7 @@ CI_TRUST=release
 ACTIONS_RUNNER_HOOK_JOB_STARTED=$hooks/job-started.sh
 ACTIONS_RUNNER_HOOK_JOB_COMPLETED=$hooks/job-completed.sh
 LANG=en_US.UTF-8
+BUN_INSTALL_CACHE_DIR=$cache_root/bun
 EOF
 printf '%s\n' "$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" >.path
 

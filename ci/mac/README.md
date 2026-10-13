@@ -13,7 +13,10 @@ bash ci/mac/install-runner.sh OWNER/REPO     # needs gh logged in as the repo ow
   `~/actions-runner/_work/<repo>` (override with `CI_RUNNER_ROOT` / `CI_WORK_ROOT`).
   Keep it on the internal disk: a LaunchAgent touching an external volume hangs on an
   invisible privacy prompt unless the runner has Full Disk Access. Workflows should delete
-  their build output at the end, since the internal disk is small.
+  their build output at the end, since the internal disk is small. The same applies to
+  caches: if `~/.bun/install/cache` is a symlink to an external volume, a job's
+  `bun install` hangs inside `open()`. So the runner gets its own `BUN_INSTALL_CACHE_DIR` in
+  `~/actions-runner/_cache/bun`.
   launchd runs it through the runner's own `svc.sh` LaunchAgent, in the login session,
   so the keychain is available.
 - **Release tier**: the shared guard (`../images/node/hooks/job-started.sh`) refuses
