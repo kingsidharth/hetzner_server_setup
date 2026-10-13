@@ -15,12 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk-
     && install -d -o runner -g runner "$ANDROID_HOME"
 
 USER runner
-RUN cd /tmp && curl -fsSLO "https://dl.google.com/android/repository/${CMDLINE_TOOLS}" \
+# Abort and retry stalled transfers: some dl.google.com IPv4 anycast addresses accept TCP but
+# never send data from this host, and a retry usually resolves to a working one.
+RUN cd /tmp && curl -fsSLO --speed-limit 10240 --speed-time 30 --retry 8 --retry-all-errors \
+      "https://dl.google.com/android/repository/${CMDLINE_TOOLS}" \
     && echo "${CMDLINE_TOOLS_SHA1}  ${CMDLINE_TOOLS}" | sha1sum -c - \
     && unzip -q "$CMDLINE_TOOLS" && mkdir -p "$ANDROID_HOME/cmdline-tools" \
     && mv cmdline-tools "$ANDROID_HOME/cmdline-tools/latest" && rm "$CMDLINE_TOOLS" \
     && yes | sdkmanager --licenses >/dev/null \
     && sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
-      "ndk;27.1.12297006" "cmake;3.30.5" >/dev/null
+      "build-tools;35.0.0" "ndk;27.1.12297006" "cmake;3.30.5" "cmake;3.22.1" >/dev/null
+# build-tools 35 and CMake 3.22.1 are what React Native 0.86 / Expo 57 builds ask for. Without
+# them AGP downloads them in every fresh container, and that download can stall the build.
 # The entrypoint needs root to start; it drops to runner itself.
 USER root
