@@ -20,6 +20,8 @@ STATE_ROOT=/var/lib/ci-platform/state
 # tmpfs, so staged secrets never touch disk. Not under /run: rootlesskit gives the rootless
 # daemon its own copy of /run, so bind mounts from there would arrive empty.
 RUN_ROOT=/dev/shm/ci-platform
+# Root-only scratch for the GitHub token header; only host-side curl reads it.
+AUTH_ROOT=/run/ci-platform
 IMAGES_DIR=/usr/local/lib/ci-platform/images
 CACHES=(bun npm electron electron-builder gradle toolcache)
 
@@ -60,11 +62,23 @@ common_args() {
   printf '%s\0' "${args[@]}"
 }
 
+# /dev/shm is world-writable, so anyone (for example ci-runner after a container escape) could
+# pre-create the staging root. Only use it when it's a real directory owned by root; inside
+# it, only root can create the per-instance directories.
+ensure_run_root() {
+  if [[ -L $RUN_ROOT || (-e $RUN_ROOT && (! -d $RUN_ROOT || ! -O $RUN_ROOT)) ]]; then
+    rm -rf "$RUN_ROOT"
+  fi
+  install -d -m 0755 "$RUN_ROOT"
+  [[ -d $RUN_ROOT && ! -L $RUN_ROOT && -O $RUN_ROOT ]] || die "unsafe staging directory $RUN_ROOT"
+  chmod 0755 "$RUN_ROOT"
+}
+
 stage_secrets() {
   local dest="$RUN_ROOT/$INSTANCE/secrets" scope
+  ensure_run_root
   rm -rf "${RUN_ROOT:?}/$INSTANCE"
   [[ $SECRETS == - ]] && return 0
-  install -d -m 0755 "$RUN_ROOT"
   owned_dir "$RUN_ROOT/$INSTANCE" "$dest"
   for scope in ${SECRETS//,/ }; do
     [[ $scope =~ ^[A-Za-z0-9._-]+$ ]] || die "$INSTANCE: bad secret scope '$scope'"
@@ -81,8 +95,8 @@ stage_secrets() {
 # Prints an encoded single-use runner config. The token goes through a root-only header file,
 # never argv, so other users can't read it from a process listing.
 jit_config() {
-  local hdr="$RUN_ROOT/.auth-$INSTANCE" body out
-  install -d -m 0755 "$RUN_ROOT"
+  local hdr="$AUTH_ROOT/auth-$INSTANCE" body out
+  install -d -m 0700 "$AUTH_ROOT"
   (umask 077 && printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" >"$hdr")
   body=$(jq -cn --arg n "$RUNNER_NAME-$(date +%s)" --arg l "$LABELS" \
     '{name: $n, runner_group_id: 1, labels: ($l | split(",")), work_folder: "/work"}')
@@ -96,7 +110,8 @@ jit_config() {
 
 # Removes a JIT runner whose container never started, so failures don't leave offline runners.
 jit_delete() {
-  local hdr="$RUN_ROOT/.auth-$INSTANCE"
+  local hdr="$AUTH_ROOT/auth-$INSTANCE"
+  install -d -m 0700 "$AUTH_ROOT"
   (umask 077 && printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" >"$hdr")
   curl -fsS -X DELETE -H @"$hdr" "https://api.github.com/repos/$REPO/actions/runners/$JIT_RUNNER_ID" || true
   rm -f "$hdr"

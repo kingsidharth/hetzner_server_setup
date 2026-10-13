@@ -52,7 +52,7 @@ if [[ -d /run/ci-secrets-src ]]; then
   install -d -m 0700 /run/secrets/ci
   cp -R /run/ci-secrets-src/. /run/secrets/ci/
   chmod -R go-rwx /run/secrets/ci
-  find /run/secrets/ci -depth -exec chown 1001:1001 {} +
+  find /run/secrets/ci -depth -exec chown -h 1001:1001 {} +
 fi
 install -d -m 0755 "$GUARD_DIR"
 
