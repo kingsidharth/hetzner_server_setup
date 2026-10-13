@@ -47,7 +47,8 @@ fi
 
 # Release-tier secrets: staged read-only by the host, copied to tmpfs readable only by the job user.
 if [[ -d /run/ci-secrets-src ]]; then
-  install -d -o 1001 -g 1001 -m 0700 /run/secrets/ci
+  # Copy while root still owns the directory (no DAC override), then hand it over.
+  install -d -m 0700 /run/secrets/ci
   cp -R /run/ci-secrets-src/. /run/secrets/ci/
   chown -R 1001:1001 /run/secrets/ci
   chmod -R go-rwx /run/secrets/ci

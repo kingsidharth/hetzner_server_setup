@@ -17,7 +17,9 @@ CONF=${CI_PLATFORM_CONF:-/etc/ci-platform/runners.conf}
 TOKEN_FILE=/etc/ci-platform/github-token
 SECRETS_ROOT=/etc/ci-secrets
 STATE_ROOT=/var/lib/ci-platform/state
-RUN_ROOT=/run/ci-platform # tmpfs: staged secrets never touch disk
+# tmpfs, so staged secrets never touch disk. Not under /run: rootlesskit gives the rootless
+# daemon its own copy of /run, so bind mounts from there would arrive empty.
+RUN_ROOT=/dev/shm/ci-platform
 IMAGES_DIR=/usr/local/lib/ci-platform/images
 CACHES=(bun npm electron electron-builder gradle toolcache)
 
