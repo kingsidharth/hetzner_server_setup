@@ -66,8 +66,14 @@ profile() {
 
 trust() {
   local repo=${1:?OWNER/REPO} app name
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "bad repo '$repo'" >&2; exit 1; }
+  # The federated credential trusts the `release` environment, so that environment must only
+  # admit v* tags. GitHub creates environments unprotected on first use, so set it here.
+  gh api -X PUT "repos/$repo/environments/release" --input - >/dev/null <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+  gh api "repos/$repo/environments/release/deployment-branch-policies" --jq '.branch_policies[] | "\(.type) \(.name)"' |
+    grep -qx "tag v\*" || gh api -X POST "repos/$repo/environments/release/deployment-branch-policies" -f name='v*' -f type=tag >/dev/null
   app=$(app_id)
-  name="gh-${repo//\//-}-release"
+  name="gh-$(tr -c 'A-Za-z0-9-' '-' <<<"$repo" | sed 's/-*$//')-release"
   az ad app federated-credential list --id "$app" --query "[?name=='$name'].name" -o tsv | grep -q . && return 0
   az ad app federated-credential create --id "$app" --parameters "$(jq -cn --arg n "$name" --arg s "repo:${repo}:environment:release" \
     '{name: $n, issuer: "https://token.actions.githubusercontent.com", subject: $s, audiences: ["api://AzureADTokenExchange"]}')" >/dev/null

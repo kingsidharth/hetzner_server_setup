@@ -16,16 +16,16 @@ USER_NAME=qa
 SECRET_FILE=${QA_SECRET_FILE:-$HOME/.config/winqa/password}
 
 up() {
-  local me password ip
+  local me ip
   me=$(curl -fsS https://api.ipify.org)
+  [[ $me =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { echo "couldn't determine this machine's public IPv4" >&2; exit 1; }
   mkdir -p "$(dirname "$SECRET_FILE")" && chmod 700 "$(dirname "$SECRET_FILE")"
   if [[ ! -s $SECRET_FILE ]]; then
     (umask 077 && printf '%s' "Qa-$(openssl rand -base64 30 | tr -dc A-Za-z0-9 | head -c 24)!9" >"$SECRET_FILE")
   fi
-  password=$(<"$SECRET_FILE")
   az group create -n "$RG" -l "$LOCATION" --tags purpose=windows-qa >/dev/null
   az vm create -g "$RG" -n "$VM" --image "$IMAGE" --size "$SIZE" \
-    --admin-username "$USER_NAME" --admin-password "$password" \
+    --admin-username "$USER_NAME" --admin-password "@$SECRET_FILE" \
     --public-ip-sku Standard --nsg-rule NONE --os-disk-delete-option Delete --only-show-errors >/dev/null
   az network nsg rule create -g "$RG" --nsg-name "${VM}NSG" -n rdp-from-me --priority 1000 \
     --source-address-prefixes "$me/32" --destination-port-ranges 3389 --protocol Tcp --access Allow >/dev/null
@@ -35,6 +35,9 @@ up() {
 }
 
 down() {
+  # Only ever delete the group this script created.
+  [[ $(az group show -n "$RG" --query tags.purpose -o tsv 2>/dev/null) == windows-qa ]] ||
+    { echo "$RG isn't tagged purpose=windows-qa; not deleting it" >&2; exit 1; }
   az group delete -n "$RG" --yes --no-wait
   echo "Deleting $RG (VM, disk, IP, network). Nothing left running."
 }
