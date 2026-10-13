@@ -10,13 +10,14 @@ bash ci/mac/install-runner.sh OWNER/REPO     # needs gh logged in as the repo ow
 
 - Labels are exactly `apple,macos-arm64`, with no defaults. Jobs use `runs-on: [apple]`.
 - The runner lives in `~/actions-runner/<repo>`, with its work dir in
-  `~/actions-runner/_work/<repo>` (override with `CI_RUNNER_ROOT` / `CI_WORK_ROOT`).
+  `~/actions-runner/_work.noindex/<repo>` (override with `CI_RUNNER_ROOT` / `CI_WORK_ROOT`).
   Keep it on the internal disk: a LaunchAgent touching an external volume hangs on an
   invisible privacy prompt unless the runner has Full Disk Access. Workflows should delete
   their build output at the end, since the internal disk is small. The same applies to
-  caches: if `~/.bun/install/cache` is a symlink to an external volume, a job's
-  `bun install` hangs inside `open()`. So the runner gets its own `BUN_INSTALL_CACHE_DIR` in
-  `~/actions-runner/_cache/bun`.
+  caches: when `~/.bun/install/cache`, `~/Library/Caches/electron` or `~/.npm` are symlinks
+  to an external volume, `bun install` and `electron-builder` hang inside `open()`. So the
+  runner gets its own bun, Electron, electron-builder and npm caches in
+  `~/actions-runner/_cache.noindex/`.
   launchd runs it through the runner's own `svc.sh` LaunchAgent, in the login session,
   so the keychain is available.
 - **Release tier**: the shared guard (`../images/node/hooks/job-started.sh`) refuses
