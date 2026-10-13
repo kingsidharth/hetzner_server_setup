@@ -54,6 +54,7 @@ ACTIONS_RUNNER_HOOK_JOB_COMPLETED=$hooks/job-completed.sh
 LANG=en_US.UTF-8
 BUN_INSTALL_CACHE_DIR=$cache_root/bun
 ELECTRON_CACHE=$cache_root/electron
+electron_config_cache=$cache_root/electron
 ELECTRON_BUILDER_CACHE=$cache_root/electron-builder
 npm_config_cache=$cache_root/npm
 EOF
@@ -65,5 +66,8 @@ printf '%s\n' "$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/us
 plist=$(<.service) # svc.sh records the LaunchAgent plist path here
 plutil -remove SoftResourceLimits "$plist" 2>/dev/null || true
 plutil -insert SoftResourceLimits -json '{"NumberOfFiles": 65536}' "$plist"
+# svc.sh sets SessionCreate, which starts jobs in a new security session that can't use the
+# (already unlocked) login keychain, so codesign fails with errSecInternalComponent.
+plutil -remove SessionCreate "$plist" 2>/dev/null || true
 ./svc.sh start
 echo "runner for $repo installed in $dir (work: $work_root/$name)"
