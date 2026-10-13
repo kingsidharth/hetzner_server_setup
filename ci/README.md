@@ -75,8 +75,10 @@ fork pull requests" off.
   <scope>/...                    e.g. <project>/android/upload.jks
 ```
 
-When a release-tier container starts, its scopes are copied to `/run/ci-platform`
-(tmpfs, owned by `ci-runner`, 0700) and mounted read-only. The entrypoint copies them
+When a release-tier container starts, its scopes are copied to
+`/dev/shm/ci-platform/<instance>/` (tmpfs; the root dir is root-owned 0755 and checked before
+every use, the per-instance dir is `ci-runner` 0700) and mounted read-only. It isn't under
+`/run`, because rootlesskit gives the rootless daemon its own copy of `/run`. The entrypoint copies them
 to a tmpfs at `/run/secrets/ci/<scope>/`, readable only by the job user. The staging
 copy is deleted when the unit stops. Workflows must treat a missing file as "skip
 with a message".

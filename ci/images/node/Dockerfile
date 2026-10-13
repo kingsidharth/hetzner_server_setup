@@ -49,6 +49,7 @@ RUN useradd --create-home --uid 1001 --shell /bin/bash runner \
 ENV BUN_INSTALL_CACHE_DIR=/cache/bun \
     npm_config_cache=/cache/npm \
     ELECTRON_CACHE=/cache/electron \
+    electron_config_cache=/cache/electron \
     ELECTRON_BUILDER_CACHE=/cache/electron-builder \
     GRADLE_USER_HOME=/cache/gradle \
     RUNNER_TOOL_CACHE=/cache/toolcache \

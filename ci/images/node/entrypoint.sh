@@ -47,10 +47,12 @@ fi
 
 # Release-tier secrets: staged read-only by the host, copied to tmpfs readable only by the job user.
 if [[ -d /run/ci-secrets-src ]]; then
-  install -d -o 1001 -g 1001 -m 0700 /run/secrets/ci
+  # This root has no DAC override, so it can only work on what it owns: copy and chmod while
+  # everything is root's, then chown children before parents (-depth).
+  install -d -m 0700 /run/secrets/ci
   cp -R /run/ci-secrets-src/. /run/secrets/ci/
-  chown -R 1001:1001 /run/secrets/ci
   chmod -R go-rwx /run/secrets/ci
+  find /run/secrets/ci -depth -exec chown -h 1001:1001 {} +
 fi
 install -d -m 0755 "$GUARD_DIR"
 
