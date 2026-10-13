@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebuild ci-platform toolchain images with the latest Actions runner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ci-platform build-images --latest-runner
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,21 @@
+[Unit]
+Description=Containerised GitHub Actions runner %i (ci-platform)
+Wants=network-online.target
+After=network-online.target user@@CI_UID@.service
+Requires=user@@CI_UID@.service
+StartLimitIntervalSec=10min
+StartLimitBurst=30
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/ci-platform run %i
+ExecStop=/usr/local/sbin/ci-platform stop %i
+# Each container serves one job and exits; systemd immediately starts a fresh one.
+Restart=always
+RestartSec=3
+# 78 = not registered yet: stay down until `ci-platform register` starts it.
+RestartPreventExitStatus=78
+TimeoutStopSec=6h
+
+[Install]
+WantedBy=multi-user.target

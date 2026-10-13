@@ -37,3 +37,7 @@ bash 3-cloudflare.sh --token eyXXXXX
 
 ## Stack installed
 Docker, Docker Compose, UFW, fail2ban, 2GB swap
+
+## Self-hosted CI (optional)
+`sudo bash ci/install.sh` adds shared, containerised GitHub Actions runners for
+private repositories. See [ci/README.md](ci/README.md).
