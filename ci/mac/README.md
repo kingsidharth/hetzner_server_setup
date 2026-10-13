@@ -30,6 +30,10 @@ bash ci/mac/install-runner.sh OWNER/REPO     # needs gh logged in as the repo ow
 Remove a runner with `cd ~/actions-runner/<repo> && ./svc.sh uninstall`, then delete it
 under the repo's Settings > Actions > Runners.
 
-**Hardening idea**: run Apple CI as a separate macOS user whose keychain holds only the
-Developer ID and distribution identities, so a compromised build can't reach your
-home directory.
+**Trust model, read this.** Jobs run as your macOS user, in your login session (the runner
+plist's `SessionCreate` is removed so codesign can use the unlocked login keychain). Release-tier
+job code, meaning anything on `main` or a `v*` tag including its dependencies, can therefore
+read your keychain items (for example `gh`'s token through `security`), your home directory,
+and the runner's own files and hooks. Only push to `main` and tags code you trust that much.
+The fix is a dedicated macOS user for CI whose keychain holds only the Developer ID and
+distribution identities, with root-owned hooks. It needs admin rights to set up.
