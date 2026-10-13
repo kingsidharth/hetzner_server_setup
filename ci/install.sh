@@ -65,16 +65,19 @@ install -d -m 0755 /var/lib/ci-platform
 install -d -o "$CI_USER" -g "$CI_USER" -m 0700 /var/lib/ci-platform/state /var/lib/ci-platform/run
 if [[ ! -f /etc/ci-platform/runners.conf ]]; then
   grep '^#' "$here/runners.conf.example" >/etc/ci-platform/runners.conf
-  chmod 0644 /etc/ci-platform/runners.conf
+  chmod 0640 /etc/ci-platform/runners.conf # lists private repo names
 fi
 rm -rf /usr/local/lib/ci-platform/images
 cp -R "$here/images" /usr/local/lib/ci-platform/images
-install -m 0755 "$here/bin/ci-platform" /usr/local/sbin/ci-platform
+install -m 0755 "$here/bin/ci-platform" "$here/bin/ci-egress" /usr/local/sbin/
 
 sed "s/@CI_UID@/${CI_UID}/g" "$here/systemd/ci-runner@.service" >/etc/systemd/system/ci-runner@.service
-install -m 0644 "$here/systemd/ci-images.service" "$here/systemd/ci-images.timer" /etc/systemd/system/
+install -m 0644 "$here/systemd/ci-images.service" "$here/systemd/ci-images.timer" \
+  "$here/systemd/ci-egress.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now ci-images.timer
+systemctl enable ci-egress.service
+systemctl restart ci-egress.service
 
 echo "=== Images"
 ci-platform build-images

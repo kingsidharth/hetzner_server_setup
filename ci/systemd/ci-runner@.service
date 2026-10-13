@@ -1,10 +1,10 @@
 [Unit]
 Description=Containerised GitHub Actions runner %i (ci-platform)
 Wants=network-online.target
-After=network-online.target user@@CI_UID@.service
-Requires=user@@CI_UID@.service
-StartLimitIntervalSec=10min
-StartLimitBurst=30
+After=network-online.target user@@CI_UID@.service ci-egress.service
+Requires=user@@CI_UID@.service ci-egress.service
+# Every job is a restart, so never rate-limit them.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -15,7 +15,7 @@ Restart=always
 RestartSec=3
 # 78 = not registered yet: stay down until `ci-platform register` starts it.
 RestartPreventExitStatus=78
-TimeoutStopSec=6h
+TimeoutStopSec=11min
 
 [Install]
 WantedBy=multi-user.target

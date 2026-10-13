@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Keeps CI containers to the public internet. Under rootless Docker all container traffic
+# leaves through processes owned by ci-runner, so an owner match covers every container
+# and touches nothing else on the host. Blocks private ranges, link-local (cloud metadata),
+# the tailnet, and this host's own addresses. Idempotent; run by ci-egress.service.
+set -Eeuo pipefail
+
+uid=$(id -u ci-runner)
+chain=CI_EGRESS
+
+apply() {
+  local cmd=$1
+  shift
+  "$cmd" -w -N "$chain" 2>/dev/null || "$cmd" -w -F "$chain"
+  local net
+  for net in "$@"; do "$cmd" -w -A "$chain" -d "$net" -j REJECT; done
+  "$cmd" -w -C OUTPUT -m owner --uid-owner "$uid" -j "$chain" 2>/dev/null ||
+    "$cmd" -w -I OUTPUT -m owner --uid-owner "$uid" -j "$chain"
+}
+
+mapfile -t own4 < <(ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1] "/32"}')
+mapfile -t own6 < <(ip -6 -o addr show scope global | awk '{split($4, a, "/"); print a[1] "/128"}')
+
+apply iptables 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 "${own4[@]}"
+apply ip6tables fc00::/7 fe80::/10 fd7a:115c:a1e0::/48 "${own6[@]}"

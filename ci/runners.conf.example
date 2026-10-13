@@ -5,7 +5,7 @@
 # repo:     owner/name the runner registers with (personal-account runners are per repo)
 # image:    toolchain image under images/ (node, android, windows)
 # trust:    check   = pull requests welcome, never gets host secrets
-#           release = only push/workflow_dispatch/release on main or v* tags; may mount secrets
+#           release = only push/workflow_dispatch/release on main or v<digit>* tags; may mount secrets
 # cpus, memory: container limits
 # labels:   comma list, no defaults added. Jobs must ask for these exact labels.
 # secrets:  comma list of /etc/ci-secrets/<scope> directories to mount, or - for none
