@@ -14,4 +14,4 @@
 example-node        owner/example             node     check    4    8g     takida,node               -
 example-deploy      owner/example             node     release  2    4g     takida,node-release       -
 example-android     owner/example             android  release  8    16g    takida,android            example
-example-windows     owner/example             windows  check    4    8g     takida,windows-cross      -
+example-windows     owner/example             windows  release  4    8g     takida,windows-cross      -
